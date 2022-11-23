@@ -1,6 +1,11 @@
 import WebSocket, { WebSocketServer } from "ws";
 
-const server = new WebSocketServer({ port: 5000 });
+let port = process.env.PORT;
+if (!port) port = "5000";
+
+const Port = Number(port)
+
+const server = new WebSocketServer({ port: Port });
 
 const users: Record<string, WebSocket> = {}; 
 
