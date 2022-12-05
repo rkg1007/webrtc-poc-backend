@@ -1,85 +1,56 @@
-import WebSocket, { WebSocketServer } from "ws";
+import { createServer } from "http";
+import { Server } from "socket.io";
 
-let port = process.env.PORT;
-if (!port) port = "5000";
+const httpServer = createServer();
+const io = new Server(httpServer, {
+    cors: {
+        origin: "http://localhost:3000"
+    },
+    // transports : ['websocket']
+});
+const usersDb: Record<string, any> = {}
 
-const Port = Number(port)
+io.on("connection", (socket) => {
+    socket.on("join", ({ username }: { username: string}) => {
+        const users = []
+        for (const user in usersDb) {
+            users.push(user);
+        }
+        socket.broadcast.emit("member-joined", { username })
+        socket.emit("online-members", { users })
+        usersDb[username] = socket.id;
+        socket.data = { username }
+    });
 
-const server = new WebSocketServer({ port: Port });
+    socket.on("disconnecting", () => {
+        const { username } = socket.data;
+        socket.broadcast.emit("member-left", { username })
+        delete usersDb[username];
+    });
 
-const users: Record<string, WebSocket> = {}; 
+    socket.on("make-call", ({ from, to, ...args }: any) => {
+        if (usersDb[to]) {
+            socket.to(usersDb[to]).emit("make-call", { from, ...args });
+        } else {
+            socket.emit("error", { msg: "something went wrong. user is not connected to the server."});
+        }
+    });
 
-server.on("connection", (socket) => {
-    socket.onopen = handleOpen;
-    socket.onmessage = (data) => handleMessage(socket, data);
-    socket.onclose = handleClose;
-    socket.onerror = handleError;
+    socket.on("accept-call", ({ from, to, ...args }: any) => {
+        if (usersDb[to]) {
+            socket.to(usersDb[to]).emit("accept-call", { from, ...args });
+        } else {
+            socket.emit("error", { msg: "something went wrong. user is not connected to the server."});
+        }
+    });
+
+    socket.on("call-signal", ({ from, to, ...args }: any) => {
+        if (usersDb[to]) {
+            socket.to(usersDb[to]).emit("call-signal", { from, ...args });
+        } else {
+            socket.emit("error", { msg: "something went wrong. user is not connected to the server."});
+        }
+    });
 });
 
-const handleOpen = () => { console.log("new connection") }
-const handleClose = () => { console.log("connection closed") }
-const handleError = () => { console.log("error occured") }
-const handleMessage = (socket: WebSocket, event: any) => {
-    const { type, data } = JSON.parse(event.data);
-    switch (type) {
-        case "join":
-            handleMemberJoin(socket, data);
-            break;
-        case "leave":
-            handleMemberLeave(data);
-            break;
-        case "message":
-            handleMemberMessage(data);
-            break;
-        default:
-            handleCustomEvent(type, data);
-            break;
-    } 
-}
-
-const handleMemberJoin = (socket: WebSocket, data: any) => {
-    const { username } = data;
-    console.log(`${username} joined the server`);
-    for (const peer in users) {
-        const peerConn = users[peer];
-        sendMessage(peerConn, { type: "member-joined", data: { username } });
-    }
-    users[username] = socket;
-}
-
-const handleMemberLeave = (data: any) => {
-    const { username } = data;
-    console.log(`${username} has left the server`);
-    delete users[username];
-    for (const peer in users) {
-        const conn = users[peer];
-        sendMessage(conn, { type: "member-left", data: { username } });
-    }
-}
-
-const handleMemberMessage = (data: any) => {
-    const { username, message } = data;
-    console.log(`${username} sent a message`, message);
-    for (const peer in users) {
-        if (peer !== username) {
-            const conn = users[peer];
-            sendMessage(conn, { type: "member-message", data: { username, message } });
-        }
-    }
-}
-
-const handleCustomEvent = (event: string, data: any) => {
-    const { username } = data;
-    console.log(`${username} fired a event ${event} with data`, data);
-    for (const peer in users) {
-        if (peer !== username) {
-            const conn = users[peer];
-            sendMessage(conn, { type: event, data });
-        }
-    }
-}
-
-const sendMessage = (socket: WebSocket, message: any) => {
-    socket.send(JSON.stringify(message));
-}
-
+httpServer.listen(5000);
